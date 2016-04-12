@@ -59,110 +59,115 @@ module.exports = function leafletImage(map, callback) {
     }
 
     function handleTileLayer(layer, callback) {
-        var isCanvasLayer = (layer instanceof L.TileLayer.Canvas),
+        layer.on('load', function (e) {
+            layerIsLoaded();
+        });
+        function layerIsLoaded() {
+            var isCanvasLayer = (layer instanceof L.TileLayer.Canvas),
             canvas = document.createElement('canvas');
 
-        canvas.width = dimensions.x;
-        canvas.height = dimensions.y;
+            canvas.width = dimensions.x;
+            canvas.height = dimensions.y;
 
-        var ctx = canvas.getContext('2d'),
+            var ctx = canvas.getContext('2d'),
             bounds = map.getPixelBounds(),
             origin = map.getPixelOrigin(),
             zoom = map.getZoom(),
             tileSize = layer.options.tileSize;
 
-        if (zoom > layer.options.maxZoom ||
-            zoom < layer.options.minZoom ||
-            // mapbox.tileLayer
-            (layer.options.format && !layer.options.tiles)) {
-            return callback();
-        }
+            if (zoom > layer.options.maxZoom ||
+              zoom < layer.options.minZoom ||
+              // mapbox.tileLayer
+              (layer.options.format && !layer.options.tiles)) {
+                return callback();
+              }
 
-        var offset = new L.Point(
-            ((origin.x / tileSize) - Math.floor(origin.x / tileSize)) * tileSize,
-            ((origin.y / tileSize) - Math.floor(origin.y / tileSize)) * tileSize
-        );
+              var offset = new L.Point(
+                ((origin.x / tileSize) - Math.floor(origin.x / tileSize)) * tileSize,
+                ((origin.y / tileSize) - Math.floor(origin.y / tileSize)) * tileSize
+              );
 
-        var tileBounds = L.bounds(
-            bounds.min.divideBy(tileSize)._floor(),
-            bounds.max.divideBy(tileSize)._floor()),
-            tiles = [],
-            center = tileBounds.getCenter(),
-            j, i, point,
-            tileQueue = new queue(1);
+              var tileBounds = L.bounds(
+                bounds.min.divideBy(tileSize)._floor(),
+                bounds.max.divideBy(tileSize)._floor()),
+                tiles = [],
+                center = tileBounds.getCenter(),
+                j, i, point,
+                tileQueue = new queue(1);
 
-        for (j = tileBounds.min.y; j <= tileBounds.max.y; j++) {
-            for (i = tileBounds.min.x; i <= tileBounds.max.x; i++) {
-                tiles.push(new L.Point(i, j));
-            }
-        }
-
-        tiles.forEach(function(tilePoint) {
-            var originalTilePoint = tilePoint.clone();
-
-            if (layer._adjustTilePoint) {
-                layer._adjustTilePoint(tilePoint);
-            }
-
-            var tilePos = layer._getTilePos(originalTilePoint)
-                .subtract(bounds.min)
-                .add(origin);
-
-            if (tilePoint.y >= 0) {
-                if (isCanvasLayer) {
-                    var tile = layer._tiles[tilePoint.x + ':' + tilePoint.y];
-                    tileQueue.defer(canvasTile, tile, tilePos, tileSize);
-                } else {
-                    var url = addCacheString(layer.getTileUrl(tilePoint));
-                    tileQueue.defer(loadTile, url, tilePos, tileSize);
+                for (j = tileBounds.min.y; j <= tileBounds.max.y; j++) {
+                  for (i = tileBounds.min.x; i <= tileBounds.max.x; i++) {
+                    tiles.push(new L.Point(i, j));
+                  }
                 }
-            }
-        });
 
-        tileQueue.awaitAll(tileQueueFinish);
+                tiles.forEach(function(tilePoint) {
+                  var originalTilePoint = tilePoint.clone();
 
-        function canvasTile(tile, tilePos, tileSize, callback) {
-            callback(null, {
-                img: tile,
-                pos: tilePos,
-                size: tileSize
-            });
-        }
+                  if (layer._adjustTilePoint) {
+                    layer._adjustTilePoint(tilePoint);
+                  }
 
-        function loadTile(url, tilePos, tileSize, callback) {
-            var im = new Image();
-            im.crossOrigin = '';
-            im.onload = function() {
-                callback(null, {
-                    img: this,
+                  var tilePos = layer._getTilePos(originalTilePoint)
+                  .subtract(bounds.min)
+                  .add(origin);
+
+                  if (tilePoint.y >= 0) {
+                    if (isCanvasLayer) {
+                      var tile = layer._tiles[tilePoint.x + ':' + tilePoint.y];
+                      tileQueue.defer(canvasTile, tile, tilePos, tileSize);
+                    } else {
+                      var url = addCacheString(layer.getTileUrl(tilePoint));
+                      tileQueue.defer(loadTile, url, tilePos, tileSize);
+                    }
+                  }
+                });
+
+                tileQueue.awaitAll(tileQueueFinish);
+
+                function canvasTile(tile, tilePos, tileSize, callback) {
+                  callback(null, {
+                    img: tile,
                     pos: tilePos,
                     size: tileSize
-                });
-            };
-            im.onerror = function(e) {
-                // use canvas instead of errorTileUrl if errorTileUrl get 404
-                if (layer.options.errorTileUrl != '' && e.target.errorCheck === undefined) {
-                    e.target.errorCheck = true;
-                    e.target.src = layer.options.errorTileUrl;
-                } else {
+                  });
+                }
+
+                function loadTile(url, tilePos, tileSize, callback) {
+                  var im = new Image();
+                  im.crossOrigin = '';
+                  im.onload = function() {
                     callback(null, {
+                      img: this,
+                      pos: tilePos,
+                      size: tileSize
+                    });
+                  };
+                  im.onerror = function(e) {
+                    // use canvas instead of errorTileUrl if errorTileUrl get 404
+                    if (layer.options.errorTileUrl != '' && e.target.errorCheck === undefined) {
+                      e.target.errorCheck = true;
+                      e.target.src = layer.options.errorTileUrl;
+                    } else {
+                      callback(null, {
                         img: dummycanvas,
                         pos: tilePos,
                         size: tileSize
-                    });
+                      });
+                    }
+                  };
+                  im.src = url;
                 }
-            };
-            im.src = url;
-        }
 
-        function tileQueueFinish(err, data) {
-            data.forEach(drawTile);
-            callback(null, { canvas: canvas });
-        }
+                function tileQueueFinish(err, data) {
+                  data.forEach(drawTile);
+                  callback(null, { canvas: canvas });
+                }
 
-        function drawTile(d) {
-            ctx.drawImage(d.img, Math.floor(d.pos.x), Math.floor(d.pos.y),
-                d.size, d.size);
+                function drawTile(d) {
+                  ctx.drawImage(d.img, Math.floor(d.pos.x), Math.floor(d.pos.y),
+                  d.size, d.size);
+                }
         }
     }
 
